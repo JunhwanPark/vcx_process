@@ -5,6 +5,7 @@ import json
 import xml.etree.ElementTree as ET
 import math
 import glob
+import csv
 
 def create_parser():
     parser = argparse.ArgumentParser(description='Calculate VCX Score')
@@ -35,6 +36,12 @@ def get_value_from_xml(xml_entry, xmlFile, valueType):
         data = list(filter(None, data))
         data = [float(a) for a in data]
         return max(data)
+    # Mean of multiple entries from single xml
+    elif valueType == "multiXMLEntryMean":
+        data = list()
+        for entry in xml_entry:
+            data.append(float(read_from_xml(root, entry)))
+        return sum(data)/len(data)
     # Effective pixel count
     # Calculated from siemens star MTF10 and pixel count
     elif valueType == "EPC":
@@ -91,6 +98,15 @@ def get_value_from_xml(xml_entry, xmlFile, valueType):
         corner = sum(corner)/len(corner)
         
         return (((center+corner)/(2*nyquist))**2)*pixelCount
+    # Artifact metric which is calculated from dead leaves chart
+    elif valueType == "artifacts":
+        DL_cross = float(read_from_xml(root, xml_entry[0]))/100
+        DL_direct_old = float(read_from_xml(root, xml_entry[1]))/100
+        artifacts = 100-(DL_cross/(DL_direct_old/100))
+        if artifacts < 0:
+            return 0
+        else:
+            return artifacts
     # Floating point value, which is normalized to nyquist before reporting
     elif valueType == "normalizeNyquist":
         value = float(read_from_xml(root, xml_entry[0]))
@@ -129,9 +145,9 @@ def calculateScore(value, formula, LGC, HGC, weight):
         else:
             result = math.log(value-LGC+1,HGC-LGC+1)
     elif formula == "flat_roof":
-        if value > LGC:
+        if abs(value) > LGC:
             result = 0
-        elif value < HGC:
+        elif abs(value) < HGC:
             result = 1
         else:
             result = (LGC-abs(value))/(LGC-HGC)
@@ -161,6 +177,18 @@ def calculateScore(value, formula, LGC, HGC, weight):
             result = 0
         else:
             result = 1-abs(value-HGC)/(LGC-HGC)
+    elif formula == "logarithmic_roof":
+        if abs(value) > LGC:
+            result = 0
+        elif abs(value) < HGC:
+            result = 1
+        else:
+            result = 1 - math.log(abs(value)-HGC+1,LGC-HGC+1)
+    elif formula == "roof_II":
+        if value < LGC or value > 2*HGC-LGC:
+            result = 0
+        else:
+            result = 1-abs(value-HGC)/(HGC-LGC)
     else:
         sys.exit("Formula not supported.")
     result *= weight
@@ -173,6 +201,143 @@ def calculateFinalSubScore(metrics):
         scoreSum += metric[0]
         weightSum += metric[1]
     return (scoreSum/weightSum)*100
+
+def calculateMeanFileSize(folder):
+    files = glob.glob(folder + "\\*.jpg")
+    fileSizes = list()
+    
+    Keywords = ["check", "calc", "test", "analysis"]
+    
+    # Discard files that include certain keywords. These are IQAnalyzer analysis files.
+    files = [s for s in files if not any(k in s for k in Keywords)]
+    
+    for file in files:
+        fileSizes.append(os.path.getsize(file)/1024)
+    return sum(fileSizes)/len(fileSizes)
+
+def calculatePerformanceMetric(metric, folders):
+    if metric["valueType"] == "compressionLoss":
+        framerateFolder = args.folder + "\\" + folders["framerate"]
+        AF800lxFolder = args.folder + "\\" + folders["AF_800lux"]
+        nonAFFolder = args.folder + "\\" + folders["nonAF"]
+        StartupFolder = args.folder + "\\" + folders["startup"]
+        
+        framerateImageSize = calculateMeanFileSize(framerateFolder)
+        AFImageSize = calculateMeanFileSize(AF800lxFolder)
+        nonAFImageSize = calculateMeanFileSize(nonAFFolder)
+        startupImageSize = calculateMeanFileSize(StartupFolder)
+        
+        return (framerateImageSize/(sum([AFImageSize, nonAFImageSize, startupImageSize])/3)-1)*100
+    
+    if metric["valueType"] == "afFailure":
+        folder = args.folder + "\\" + folders[metric["fileTag"]]
+        
+        xmls = glob.glob(folder + "\*.xml")
+        
+        MTFs = list()
+        for xml in xmls:
+            meanMTF = 0
+            for edge in ["Top", "Bottom", "Left", "Right"]:
+                meanMTF += get_value_from_xml("SFR_Edge/EdgesCenter/" + edge + "/Y/Results/Limit/MTF50", xml, "float")
+            MTFs.append(meanMTF/4)
+            
+        # Get nyquist from first xml
+        nyquist = get_value_from_xml("SFR_Edge/EdgesCenter/Y/SFR/nyquist_frequency", xml, "float")
+        
+        # Threshold for blurriness
+        threshold = 0.5
+        
+        unsharpCount = 0
+        for MTF in MTFs:
+            if MTF < threshold*nyquist:
+                unsharpCount += 1
+            
+        return (unsharpCount/len(MTFs))*100
+        
+    if metric["valueType"] == "delta":
+        # Read result csv
+        file = glob.glob(args.folder + "\*" + metric["fileTag"] + "*.csv")[0]
+        values = list()
+        values2 = list()
+        with open(file) as csvFile:
+            readCSV = csv.reader(csvFile, delimiter=',')
+            for row in readCSV:
+                try: 
+                    values.append(float(row[metric["column"][0]]))
+                    values2.append(float(row[metric["column"][1]]))
+                except ValueError:
+                    continue
+                
+        return sum(values)/len(values)-sum(values2)/len(values2)
+    
+    if metric["valueType"] == "MultipleXMLMean":
+        
+        value = list()
+        for xml in glob.glob(args.folder + "\\" + folders[metric["fileTag"]] + "\\*.xml"):            
+            imageMeanValue = list()
+            # Read xmls
+            for xmlEntry in metric["xml_entry"]:
+                imageMeanValue.append(get_value_from_xml(xmlEntry, xml, "float"))
+                
+            imageMeanValue = sum(imageMeanValue)/len(imageMeanValue)
+            
+            value.append(imageMeanValue)
+            
+        value = sum(value)/len(value)
+        return(value)
+        
+    if "MultipleXMLMeanDelta" in metric["valueType"]:
+        
+        value1 = list()
+        for xml in glob.glob(args.folder + "\\" + folders[metric["fileTag"][0]] + "\\*.xml"):            
+            imageMeanValue = list()
+            # Read xmls
+            for xmlEntry in metric["xml_entry"]:
+                imageMeanValue.append(get_value_from_xml(xmlEntry, xml, "float"))
+                
+            imageMeanValue = sum(imageMeanValue)/len(imageMeanValue)
+            
+            value1.append(imageMeanValue)
+            
+        value1 = sum(value1)/len(value1)
+        
+        value2 = list()
+        for xml in glob.glob(args.folder + "\\" + folders[metric["fileTag"][1]] + "\\*.xml"):            
+            imageMeanValue = list()
+            # Read xmls
+            for xmlEntry in metric["xml_entry"]:
+                imageMeanValue.append(get_value_from_xml(xmlEntry, xml, "float"))
+                
+            imageMeanValue = sum(imageMeanValue)/len(imageMeanValue)
+            
+            value2.append(imageMeanValue)
+            
+        value2 = sum(value2)/len(value2)
+        
+        if "Percent" in metric["valueType"]:
+            return((value1/value2-1)*100)
+        if "Absolute" in metric["valueType"]:
+            return(value1-value2)
+        sys.exit("Value type not supported.")
+    
+    # Read result csv
+    file = glob.glob(args.folder + "\*" + metric["fileTag"] + "*.csv")[0]
+    values = list()
+    with open(file) as csvFile:
+        readCSV = csv.reader(csvFile, delimiter=',')
+        for row in readCSV:
+            try: 
+                values.append(float(row[metric["column"]]))
+            except ValueError:
+                continue
+    
+    if metric["valueType"] == "fps":
+        return (values[-1] - values[1])/values[0]
+    if metric["valueType"] == "meanScaled":
+        return (sum(values[1:])/(len(values)-1))/values[0]
+    if metric["valueType"] == "mean":
+        return sum(values)/len(values)
+    sys.exit("Value type not supported.")
 
 if __name__ == '__main__':
     parser = create_parser()
@@ -208,8 +373,7 @@ if __name__ == '__main__':
                 
                 # Calculate score
                 metricScore = calculateScore(value, metric["formula"], metric["LGC"], metric["HGC"], metric["weight"])
-                #print(metric["name"], str(value), str(metricScore))
-                
+                #print(metric["name"], str(value), str(metricScore))                
                 results[metric["name"]] = (metricScore, metric["weight"])
                 
             
@@ -217,6 +381,12 @@ if __name__ == '__main__':
             
         print(subscore["name"], max(scores))
     
+    perfMetrics = dict()
     # Perfomance scores
+    print("Performance")
     for metric in config["Performance"]["Metrics"]:
-        print(metric["name"])
+        value = calculatePerformanceMetric(metric, config["Performance"]["Folders"])
+        metricScore = calculateScore(value, metric["formula"], metric["LGC"], metric["HGC"], metric["weight"])
+        perfMetrics[metric["name"]] = (metricScore, metric["weight"])
+        
+    print("Performance", calculateFinalSubScore(perfMetrics))
