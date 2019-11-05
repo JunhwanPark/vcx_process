@@ -42,6 +42,14 @@ def get_value_from_xml(xml_entry, xmlFile, valueType):
         for entry in xml_entry:
             data.append(float(read_from_xml(root, entry)))
         return sum(data)/len(data)
+    # Calculate means of entries except last. Normalize result with last entry.
+    elif valueType == "overshoot":
+        data = list()
+        for entry in xml_entry[:-1]:
+            data.append(float(read_from_xml(root, entry)))
+        result = sum(data)/len(data)
+        result = (100*result)/float(read_from_xml(root, xml_entry[-1]))
+        return result
     # Effective pixel count
     # Calculated from siemens star MTF10 and pixel count
     elif valueType == "EPC":
