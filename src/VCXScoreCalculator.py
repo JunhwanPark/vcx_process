@@ -142,9 +142,68 @@ def find_subScoreFolder(folder, testcase):
     for folder in folders:
         if testcase in folder:
             return folder
-    sys.exit("Connot find IQAnalyzer xml for testcase " + testcase)
+    print("Cannot find IQAnalyzer xml for testcase " + testcase)
+    return ""
 
-def calculateScore(value, formula, LGC, HGC, weight):
+def calculateScoreV20(value, formula, LGC, HGC, weight):
+    if formula == "logarithmic":
+        if value < LGC:
+            result = 0
+        elif value > HGC:
+            result = 1
+        else:
+            result = math.log(value-LGC+1,HGC-LGC+1)
+    elif formula == "flat_roof":
+        if abs(value) > LGC:
+            result = math.log(abs(value-LGC),LGC)*(-2)
+        elif abs(value) < HGC:
+            result = 1
+        else:
+            result = (LGC-abs(value))/(LGC-HGC)
+    elif formula == "logarithmic_neg.linear":
+        if value < 2*LGC-HGC:
+            result = -1
+        elif value < LGC:
+            result = (LGC-value)/(LGC-HGC)
+        elif value > HGC:
+            result = 1
+        else:
+            result = math.log(value-LGC+1,HGC-LGC+1)
+    elif formula == "roof_negative_ll":
+        if value < 2*LGC-HGC or value > 3*HGC - 2*LGC:
+            result = -1
+        else:
+            result = 1-abs(value-HGC)/(HGC-LGC)
+    elif formula == "linear":
+        if value < LGC:
+            result = math.log(abs(value-LGC),LGC)*(-1)
+        elif value > HGC:
+            result = 1
+        else:
+            result = (LGC-value)/(LGC-HGC)
+    elif formula == "roof_hl":
+        if value < 2*HGC-LGC or value > LGC:
+            result = math.log(abs(value-LGC),LGC)*(-1)
+        else:
+            result = 1-abs(value-HGC)/(LGC-HGC)
+    elif formula == "logarithmic_roof":
+        if abs(value) > LGC:
+            result = math.log(abs(value-LGC),LGC)*(-2)
+        elif abs(value) < HGC:
+            result = 1
+        else:
+            result = 1 - math.log(abs(value)-HGC+1,LGC-HGC+1)
+    elif formula == "roof_II":
+        if value < LGC or value > 2*HGC-LGC:
+            result = abs(value-LGC)*(-2)
+        else:
+            result = 1-abs(value-HGC)/(HGC-LGC)
+    else:
+        sys.exit("Formula not supported.")
+    result *= weight
+    return result
+
+def calculateScoreV15(value, formula, LGC, HGC, weight):
     if formula == "logarithmic":
         if value < LGC:
             result = 0
@@ -364,37 +423,51 @@ if __name__ == '__main__':
         
         scores = list()
         
+        subScoreWeight = subscore["SubScoreWeight"]
+        
         # Find image xml file based on SubScore name
         subScoreFolder = find_subScoreFolder(args.folder,subscore["name"])
+        
+        if(subScoreFolder == ""):
+            continue
+        
         for xmlFile in glob.glob(subScoreFolder + "\*.xml"):
             print(xmlFile)
             
             results = dict()
             
-            for metric in subscore["Metrics"]:
-                
-                
-                # Get calue from xml file
-                value = get_value_from_xml(metric["xml_entry"], xmlFile, metric["valueType"])
-                
-                #value = 21
-                
-                # Calculate score
-                metricScore = calculateScore(value, metric["formula"], metric["LGC"], metric["HGC"], metric["weight"])
-                #print(metric["name"], str(value), str(metricScore))                
-                results[metric["name"]] = (metricScore, metric["weight"])
-                
+            for group in subscore["Groups"]:
+                groupWeight = group["groupWeight"]
+                for metric in group["Metrics"]:
+                    
+                    
+                    # Get calue from xml file
+                    value = get_value_from_xml(metric["xml_entry"], xmlFile, metric["valueType"])
+                    
+                    #value = 21
+                    
+                    finalWeight = subScoreWeight*groupWeight*metric["weight"]*10
+                    
+                    # Calculate score
+                    metricScore = calculateScoreV20(value, metric["formula"], metric["LGC"], metric["HGC"], finalWeight)
+                    if math.isnan(metricScore):
+                        metricScore = 0
+                    
+                    #print(metric["name"], str(value), str(metricScore), str(finalWeight))                
+                    results[metric["name"]] = (metricScore, finalWeight)
             
+                
             scores.append(calculateFinalSubScore(results))
-            
+        
+        
         print(subscore["name"], max(scores))
     
     perfMetrics = dict()
     # Perfomance scores
-    print("Performance")
-    for metric in config["Performance"]["Metrics"]:
-        value = calculatePerformanceMetric(metric, config["Performance"]["Folders"])
-        metricScore = calculateScore(value, metric["formula"], metric["LGC"], metric["HGC"], metric["weight"])
-        perfMetrics[metric["name"]] = (metricScore, metric["weight"])
+    #print("Performance")
+    #for metric in config["Performance"]["Metrics"]:
+    #    value = calculatePerformanceMetric(metric, config["Performance"]["Folders"])
+    #    metricScore = calculateScoreV20(value, metric["formula"], metric["LGC"], metric["HGC"], metric["weight"])
+    #    perfMetrics[metric["name"]] = (metricScore, metric["weight"])
         
-    print("Performance", calculateFinalSubScore(perfMetrics))
+    #print("Performance", calculateFinalSubScore(perfMetrics))
