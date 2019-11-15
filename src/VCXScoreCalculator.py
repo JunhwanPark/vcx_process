@@ -6,15 +6,20 @@ import xml.etree.ElementTree as ET
 import math
 import glob
 import csv
+import numpy as np
+import matplotlib.pyplot as plt
 
 def create_parser():
     parser = argparse.ArgumentParser(description='Calculate VCX Score')
     parser.add_argument('folder', type=str, help='Folder where TE42 xmls are')
     parser.add_argument('--config', type=str, help='Config file', default='vcx1.5_config.json')
+    parser.add_argument('--plotfunctions', action='store_true', help='Plot functions of all metrics and save them as png files.')
     return parser
 
 def read_from_xml(root, xml_entry):
     child = root.find(".//" + xml_entry)
+    if child is None:
+        raise Exception("XML entry not found.")
     return child.text
 
 def normalizeToNyquist(mtf, nyquist):
@@ -25,117 +30,121 @@ def normalizeToNyquist(mtf, nyquist):
     return mtf
 
 def get_value_from_xml(xml_entry, xmlFile, valueType):
-    root = ET.parse(xmlFile)
     
-    # Simple floating point value
-    if valueType == "float":
-        return float(read_from_xml(root, xml_entry))
-    # Maximum of table
-    elif valueType == "max":
-        data = read_from_xml(root, xml_entry).split(";")
-        data = list(filter(None, data))
-        data = [float(a) for a in data]
-        return max(data)
-    # Mean of multiple entries from single xml
-    elif valueType == "multiXMLEntryMean":
-        data = list()
-        for entry in xml_entry:
-            data.append(float(read_from_xml(root, entry)))
-        return sum(data)/len(data)
-    # Calculate means of entries except last. Normalize result with last entry.
-    elif valueType == "overshoot":
-        data = list()
-        for entry in xml_entry[:-1]:
-            data.append(float(read_from_xml(root, entry)))
-        result = sum(data)/len(data)
-        result = (100*result)/float(read_from_xml(root, xml_entry[-1]))
-        return result
-    # Effective pixel count
-    # Calculated from siemens star MTF10 and pixel count
-    elif valueType == "EPC":
-        nyquist = float(read_from_xml(root, xml_entry[-2]))
-        pixelCount = float(read_from_xml(root, xml_entry[-1]))
-        center = list()
-        for i in range(8):
-            value = float(read_from_xml(root, xml_entry[i]))
-            # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
-            if i % 2 == 0:
-                value = normalizeToNyquist(value, nyquist)
-            else:
-                value = normalizeToNyquist(value, nyquist*1.4)
-            center.append(value)
-        corner = list()
-        #Corner 1
-        for i in range(3):
-            value = float(read_from_xml(root, xml_entry[i+8]))
-            # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
-            if i % 2 == 0:
-                value = normalizeToNyquist(value, nyquist)
-            else:
-                value = normalizeToNyquist(value, nyquist*1.4)
-            corner.append(value)
-        #Corner 2
-        for i in range(3):
-            value = float(read_from_xml(root, xml_entry[i+11]))
-            # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
-            if i % 2 == 0:
-                value = normalizeToNyquist(value, nyquist)
-            else:
-                value = normalizeToNyquist(value, nyquist*1.4)
-            corner.append(value)
-        #Corner 3
-        for i in range(3):
-            value = float(read_from_xml(root, xml_entry[i+14]))
-            # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
-            if i % 2 == 0:
-                value = normalizeToNyquist(value, nyquist)
-            else:
-                value = normalizeToNyquist(value, nyquist*1.4)
-            corner.append(value)
-        #Corner 4
-        for i in range(3):
-            value = float(read_from_xml(root, xml_entry[i+17]))
-            # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
-            if i % 2 == 0:
-                value = normalizeToNyquist(value, nyquist)
-            else:
-                value = normalizeToNyquist(value, nyquist*1.4)
-            corner.append(value)
+    try:
+        root = ET.parse(xmlFile)
         
-        center = sum(center)/len(center)
-        corner = sum(corner)/len(corner)
-        
-        return (((center+corner)/(2*nyquist))**2)*pixelCount
-    # Artifact metric which is calculated from dead leaves chart
-    elif valueType == "artifacts":
-        DL_cross = float(read_from_xml(root, xml_entry[0]))/100
-        DL_direct_old = float(read_from_xml(root, xml_entry[1]))/100
-        artifacts = 100-(DL_cross/(DL_direct_old/100))
-        if artifacts < 0:
-            return 0
+        # Simple floating point value
+        if valueType == "float":
+            return float(read_from_xml(root, xml_entry))
+        # Maximum of table
+        elif valueType == "max":
+            data = read_from_xml(root, xml_entry).split(";")
+            data = list(filter(None, data))
+            data = [float(a) for a in data]
+            return max(data)
+        # Mean of multiple entries from single xml
+        elif valueType == "multiXMLEntryMean":
+            data = list()
+            for entry in xml_entry:
+                data.append(float(read_from_xml(root, entry)))
+            return sum(data)/len(data)
+        # Calculate means of entries except last. Normalize result with last entry.
+        elif valueType == "overshoot":
+            data = list()
+            for entry in xml_entry[:-1]:
+                data.append(float(read_from_xml(root, entry)))
+            result = sum(data)/len(data)
+            result = (100*result)/float(read_from_xml(root, xml_entry[-1]))
+            return result
+        # Effective pixel count
+        # Calculated from siemens star MTF10 and pixel count
+        elif valueType == "EPC":
+            nyquist = float(read_from_xml(root, xml_entry[-2]))
+            pixelCount = float(read_from_xml(root, xml_entry[-1]))
+            center = list()
+            for i in range(8):
+                value = float(read_from_xml(root, xml_entry[i]))
+                # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
+                if i % 2 == 0:
+                    value = normalizeToNyquist(value, nyquist)
+                else:
+                    value = normalizeToNyquist(value, nyquist*1.4)
+                center.append(value)
+            corner = list()
+            #Corner 1
+            for i in range(3):
+                value = float(read_from_xml(root, xml_entry[i+8]))
+                # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
+                if i % 2 == 0:
+                    value = normalizeToNyquist(value, nyquist)
+                else:
+                    value = normalizeToNyquist(value, nyquist*1.4)
+                corner.append(value)
+            #Corner 2
+            for i in range(3):
+                value = float(read_from_xml(root, xml_entry[i+11]))
+                # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
+                if i % 2 == 0:
+                    value = normalizeToNyquist(value, nyquist)
+                else:
+                    value = normalizeToNyquist(value, nyquist*1.4)
+                corner.append(value)
+            #Corner 3
+            for i in range(3):
+                value = float(read_from_xml(root, xml_entry[i+14]))
+                # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
+                if i % 2 == 0:
+                    value = normalizeToNyquist(value, nyquist)
+                else:
+                    value = normalizeToNyquist(value, nyquist*1.4)
+                corner.append(value)
+            #Corner 4
+            for i in range(3):
+                value = float(read_from_xml(root, xml_entry[i+17]))
+                # Normalize orthogonal sectors to nyquist and diagonal to 1.4 * nyquist
+                if i % 2 == 0:
+                    value = normalizeToNyquist(value, nyquist)
+                else:
+                    value = normalizeToNyquist(value, nyquist*1.4)
+                corner.append(value)
+            
+            center = sum(center)/len(center)
+            corner = sum(corner)/len(corner)
+            
+            return (((center+corner)/(2*nyquist))**2)*pixelCount
+        # Artifact metric which is calculated from dead leaves chart
+        elif valueType == "artifacts":
+            DL_cross = float(read_from_xml(root, xml_entry[0]))/100
+            DL_direct_old = float(read_from_xml(root, xml_entry[1]))/100
+            artifacts = 100-(DL_cross/(DL_direct_old/100))
+            if artifacts < 0:
+                return 0
+            else:
+                return artifacts
+        # Floating point value, which is normalized to nyquist before reporting
+        elif valueType == "normalizeNyquist":
+            value = float(read_from_xml(root, xml_entry[0]))
+            nyquist = float(read_from_xml(root, xml_entry[1]))
+            return normalizeToNyquist(value, nyquist)
+        # Mean value of certain skin tone color patches
+        elif valueType == "skinMean":
+            patchNos = [4,9,62,63,64,65,66,67,68,74,75,76,77,78,79,80,92]
+            patches = read_from_xml(root, xml_entry).split(";")
+            
+            mean = 0.0
+            for number in patchNos:
+                mean += float(patches[number])
+            mean /= len(patchNos)
+            
+            return mean
+        # Only for debugging purposes
+        elif valueType == "debug":
+            return 2.2
         else:
-            return artifacts
-    # Floating point value, which is normalized to nyquist before reporting
-    elif valueType == "normalizeNyquist":
-        value = float(read_from_xml(root, xml_entry[0]))
-        nyquist = float(read_from_xml(root, xml_entry[1]))
-        return normalizeToNyquist(value, nyquist)
-    # Mean value of certain skin tone color patches
-    elif valueType == "skinMean":
-        patchNos = [4,9,62,63,64,65,66,67,68,74,75,76,77,78,79,80,92]
-        patches = read_from_xml(root, xml_entry).split(";")
-        
-        mean = 0.0
-        for number in patchNos:
-            mean += float(patches[number])
-        mean /= len(patchNos)
-        
-        return mean
-    # Only for debugging purposes
-    elif valueType == "debug":
-        return 2.2
-    else:
-        sys.exit("Unknown value type.")
+            sys.exit("Unknown value type.")
+    except:
+        print("XML entry not found")
 
 def find_subScoreFolder(folder, testcase):
     folders = [x[0] for x in os.walk(folder)]
@@ -156,6 +165,7 @@ def calculateScoreV20(value, formula, LGC, HGC, weight):
     elif formula == "flat_roof":
         if abs(value) > LGC:
             result = math.log(abs(value-LGC),LGC)*(-2)
+            return result
         elif abs(value) < HGC:
             result = 1
         else:
@@ -177,6 +187,7 @@ def calculateScoreV20(value, formula, LGC, HGC, weight):
     elif formula == "linear":
         if value < LGC:
             result = math.log(abs(value-LGC),LGC)*(-1)
+            return result
         elif value > HGC:
             result = 1
         else:
@@ -184,6 +195,7 @@ def calculateScoreV20(value, formula, LGC, HGC, weight):
     elif formula == "roof_hl":
         if value < 2*HGC-LGC or value > LGC:
             result = math.log(abs(value-LGC),LGC)*(-1)
+            return result
         else:
             result = 1-abs(value-HGC)/(LGC-HGC)
     elif formula == "logarithmic_roof":
@@ -196,6 +208,7 @@ def calculateScoreV20(value, formula, LGC, HGC, weight):
     elif formula == "roof_II":
         if value < LGC or value > 2*HGC-LGC:
             result = abs(value-LGC)*(-2)
+            return result
         else:
             result = 1-abs(value-HGC)/(HGC-LGC)
     else:
@@ -260,6 +273,10 @@ def calculateScoreV15(value, formula, LGC, HGC, weight):
         sys.exit("Formula not supported.")
     result *= weight
     return result
+
+def calculateScore(value, xp, yp, weight):
+    score = np.interp(value, xp, yp)
+    return score*weight
 
 def calculateFinalSubScore(metrics):
     scoreSum = 0
@@ -409,6 +426,9 @@ def calculatePerformanceMetric(metric, folders):
 if __name__ == '__main__':
     parser = create_parser()
     args = parser.parse_args(sys.argv[1:])
+    
+    if args.plotfunctions:
+        print("Saving plots of metric to score functions.")
 	
     # Find config file
     if not os.path.isfile(args.config):
@@ -431,7 +451,13 @@ if __name__ == '__main__':
         if(subScoreFolder == ""):
             continue
         
-        for xmlFile in glob.glob(subScoreFolder + "\*.xml"):
+        xmlFiles = glob.glob(os.path.join(subScoreFolder, "*.xml"))
+        
+        if len(xmlFiles) == 0:
+            print("Cannot find IQAnalyzer xml for testcase " + subscore["name"])
+            continue
+        
+        for xmlFile in xmlFiles:
             print(xmlFile)
             
             results = dict()
@@ -440,6 +466,13 @@ if __name__ == '__main__':
                 groupWeight = group["groupWeight"]
                 for metric in group["Metrics"]:
                     
+                    if args.plotfunctions:
+                        plt.clf()
+                        plt.plot(metric["xp"], metric["yp"])
+                        plt.title(subscore["name"] + " - " + metric["name"])
+                        plt.xlabel("Metric")
+                        plt.ylabel("Score")
+                        plt.savefig(subscore["name"] + " " + metric["name"] + ".png")
                     
                     # Get calue from xml file
                     value = get_value_from_xml(metric["xml_entry"], xmlFile, metric["valueType"])
@@ -449,7 +482,8 @@ if __name__ == '__main__':
                     finalWeight = subScoreWeight*groupWeight*metric["weight"]*10
                     
                     # Calculate score
-                    metricScore = calculateScoreV20(value, metric["formula"], metric["LGC"], metric["HGC"], finalWeight)
+                    #metricScore = calculateScoreV20(value, metric["formula"], metric["LGC"], metric["HGC"], finalWeight)
+                    metricScore = calculateScore(value, metric["xp"], metric["yp"], finalWeight)
                     if math.isnan(metricScore):
                         metricScore = 0
                     
